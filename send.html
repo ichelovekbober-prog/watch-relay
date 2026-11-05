@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>На часы: заметки и фото</title>
+<style>
+body{font-family:system-ui,sans-serif;margin:0;padding:16px;background:#111;color:#eee}
+h1{font-size:20px;margin:0 0 12px}
+.tabs{display:flex;gap:8px;margin-bottom:14px}
+.tabs button{flex:1;font-size:17px;padding:12px;border-radius:12px;border:0;background:#262626;color:#ccc}
+.tabs button.on{background:#4CC2FF;color:#000;font-weight:bold}
+textarea{width:100%;height:46vh;box-sizing:border-box;font-size:17px;padding:10px;border-radius:12px;border:1px solid #444;background:#1c1c1c;color:#fff}
+button.act{font-size:18px;padding:14px 18px;border-radius:12px;border:0;margin:10px 8px 0 0}
+#send,#psend{background:#4CC2FF;color:#000;font-weight:bold}
+#paste{background:#333;color:#fff}
+.st{margin-top:14px;font-size:16px;color:#aaa;min-height:24px;white-space:pre-line}
+#thumbs{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+#thumbs canvas{width:84px;height:84px;border-radius:50%;background:#000;border:2px solid #333}
+.hint{font-size:14px;color:#888;margin-top:8px}
+input[type=file]{font-size:16px;color:#ddd;width:100%}
+</style></head><body>
+<h1>На часы</h1>
+<div class="tabs"><button id="tn" class="on">Заметка</button><button id="tp">Фото</button></div>
+
+<div id="pn">
+  <textarea id="t" placeholder="Вставь или напиши текст"></textarea>
+  <div><button class="act" id="send">Отправить на часы</button><button class="act" id="paste">Вставить из буфера</button></div>
+  <div class="st" id="st"></div>
+</div>
+
+<div id="pp" style="display:none">
+  <input type="file" id="f" accept="image/*" multiple>
+  <div id="thumbs"></div>
+  <div><button class="act" id="psend">Отправить фото на часы</button></div>
+  <div class="hint">Фото обрезается по центру в квадрат 466×466 и сжимается до ~28 КБ. Потом нажми «Обновить» в Галерее на часах.</div>
+  <div class="st" id="pst"></div>
+</div>
+
+<script>
+var NOTE_TOPIC="wnote-xdmiwebvnas638", PHOTO_TOPIC="wphoto-8kxn9xx02hrk7b", LIMIT=3500, PHOTO_BYTES=28000, CHUNK=3800;
+// HELPERS-START
+function chunkStr(s,n){var o=[];for(var i=0;i<s.length;i+=n)o.push(s.slice(i,i+n));return o.length?o:[""]}
+function photoTitle(id,i,n){return "P|"+id+"|"+(i+1)+"|"+n}
+// HELPERS-END
+function sleep(ms){return new Promise(function(r){setTimeout(r,ms)})}
+async function publish(topic,message,title){
+  for(var a=0;a<6;a++){
+    var r=await fetch("https://ntfy.sh/",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({topic:topic,message:message,title:title})});
+    if(r.ok)return;
+    if(r.status===429){await sleep(6000);continue}
+    throw new Error("HTTP "+r.status);
+  }
+  throw new Error("слишком много запросов, попробуй позже");
+}
+// ---------- вкладки ----------
+var tn=document.getElementById("tn"),tp=document.getElementById("tp"),pn=document.getElementById("pn"),pp=document.getElementById("pp");
+tn.onclick=function(){tn.className="on";tp.className="";pn.style.display="";pp.style.display="none"};
+tp.onclick=function(){tp.className="on";tn.className="";pp.style.display="";pn.style.display="none"};
+// ---------- заметки ----------
+var st=document.getElementById("st"),t=document.getElementById("t");
+function chunksBytes(text){
+  var enc=new TextEncoder(),out=[],cur="",curB=0;
+  for(var ch of text){var b=enc.encode(ch).length;if(curB+b>LIMIT){out.push(cur);cur="";curB=0}cur+=ch;curB+=b}
+  if(cur!==""||out.length===0)out.push(cur);return out;
+}
+function setText(x){t.value=x;st.textContent="Текст вставлен, жми «Отправить на часы»"}
+document.getElementById("paste").onclick=function(){
+  if(window.Android&&Android.paste){var c=Android.paste();if(c){t.value=c;st.textContent="";return}st.textContent="Буфер пуст";return}
+  if(navigator.clipboard&&navigator.clipboard.readText){navigator.clipboard.readText().then(function(x){t.value=x}).catch(function(){st.textContent="Нет доступа к буферу: вставь текст вручную"})}
+  else st.textContent="Вставь текст вручную (долгое нажатие в поле)";
+};
+document.getElementById("send").onclick=async function(){
+  var text=t.value.replace(/\s+$/,"");
+  if(!text){st.textContent="Пусто";return}
+  var parts=chunksBytes(text),id=Date.now().toString(36),title=text.split("\n")[0].trim().slice(0,30)||"Заметка";
+  st.textContent="Отправка…";
+  try{
+    for(var i=0;i<parts.length;i++)await publish(NOTE_TOPIC,parts[i],id+"|"+(i+1)+"|"+parts.length+"|"+title);
+    st.textContent="Отправлено ("+parts.length+" шт.). Нажми «Обновить» на часах.";t.value="";
+  }catch(e){st.textContent="Ошибка: "+e.message}
+};
+// ---------- фото ----------
+var fin=document.getElementById("f"),thumbs=document.getElementById("thumbs"),pst=document.getElementById("pst"),ready=[];
+async function loadBitmap(file){
+  if(window.createImageBitmap){try{return await createImageBitmap(file)}catch(e){}}
+  return await new Promise(function(res,rej){var im=new Image(),u=URL.createObjectURL(file);im.onload=function(){res(im)};im.onerror=function(){rej(new Error("не открывается"))};im.src=u});
+}
+function drawSquare(bmp,size){
+  var c=document.createElement("canvas");c.width=c.height=size;var x=c.getContext("2d");
+  var w=bmp.width||bmp.naturalWidth,h=bmp.height||bmp.naturalHeight,s=Math.min(w,h);
+  x.fillStyle="#000";x.fillRect(0,0,size,size);x.drawImage(bmp,(w-s)/2,(h-s)/2,s,s,0,0,size,size);return c;
+}
+function blobOf(c,q){return new Promise(function(res){c.toBlob(res,"image/jpeg",q)})}
+function b64Of(blob){return new Promise(function(res,rej){var r=new FileReader();r.onload=function(){res(String(r.result).split(",")[1])};r.onerror=rej;r.readAsDataURL(blob)})}
+async function encode(bmp){
+  var sizes=[466,420,380,340,300,260],qs=[0.85,0.75,0.65,0.55,0.45,0.35],last=null;
+  for(var i=0;i<sizes.length;i++){
+    var c=drawSquare(bmp,sizes[i]);
+    for(var j=0;j<qs.length;j++){var b=await blobOf(c,qs[j]);last={blob:b,canvas:c};if(b.size<=PHOTO_BYTES)return last}
+  }
+  return last;
+}
+fin.onchange=async function(){
+  ready=[];thumbs.innerHTML="";pst.textContent="Обработка…";
+  var files=Array.prototype.slice.call(fin.files),i;
+  for(i=0;i<files.length;i++){
+    try{
+      var bmp=await loadBitmap(files[i]),e=await encode(bmp);
+      ready.push({b64:await b64Of(e.blob),kb:Math.round(e.blob.size/1024)});
+      var th=e.canvas;thumbs.appendChild(th);
+    }catch(err){pst.textContent="Не удалось обработать "+files[i].name+": "+err.message;return}
+  }
+  pst.textContent=ready.length?("Готово к отправке: "+ready.length+" фото ("+ready.map(function(r){return r.kb+" КБ"}).join(", ")+")"):"Выбери фото";
+};
+document.getElementById("psend").onclick=async function(){
+  if(!ready.length){pst.textContent="Сначала выбери фото";return}
+  try{
+    for(var i=0;i<ready.length;i++){
+      var id=Date.now().toString(36)+Math.floor(Math.random()*36).toString(36),parts=chunkStr(ready[i].b64,CHUNK);
+      for(var k=0;k<parts.length;k++){
+        pst.textContent="Фото "+(i+1)+"/"+ready.length+", часть "+(k+1)+"/"+parts.length;
+        await publish(PHOTO_TOPIC,parts[k],photoTitle(id,k,parts.length));await sleep(250);
+      }
+    }
+    pst.textContent="Отправлено: "+ready.length+" фото. Нажми «Обновить» в Галерее на часах.";ready=[];thumbs.innerHTML="";fin.value="";
+  }catch(e){pst.textContent="Ошибка: "+e.message}
+};
+</script></body></html>

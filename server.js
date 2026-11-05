@@ -99,8 +99,11 @@ async function ntfy(req, res, q) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://x");
   try {
-    if (url.pathname === "/" ) {
-      return send(res, 200, fs.readFileSync(path.join(__dirname, "send.html"), "utf8"), "text/html; charset=utf-8");
+    if (url.pathname === "/") {
+      let page;
+      try { page = fs.readFileSync(path.join(__dirname, "send.html"), "utf8"); }
+      catch (e) { page = "<!doctype html><meta charset=utf-8><p>Сервер работает. Страница отправки не найдена.</p>"; }
+      return send(res, 200, page, "text/html; charset=utf-8");
     }
     if (url.pathname === "/api/ping") return send(res, 200, "ok", "text/plain");
     if (url.pathname === "/api/chat") return chat(req, res);
